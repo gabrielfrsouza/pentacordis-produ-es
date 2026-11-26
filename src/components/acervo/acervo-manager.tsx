@@ -1,8 +1,9 @@
 "use client";
 
 import { useMemo, useState, type FormEvent } from "react";
-import { FileAudio, FileText, Plus, Search, Upload } from "lucide-react";
+import { FileAudio, FileText, Pencil, Plus, Search, Trash2, Upload } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { confirmCascadeDelete } from "@/lib/confirm-cascade-delete";
 import type { Song, SongAsset } from "@/types/database";
 import { EditorialEmpty } from "@/components/ui/editorial-empty";
 
@@ -16,6 +17,8 @@ export function AcervoManager({ initialSongs, initialAssets }: Props) {
   const [category, setCategory] = useState("todos");
   const [message, setMessage] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [editingSong, setEditingSong] = useState<Song | null>(null);
+  const [deletingSongId, setDeletingSongId] = useState<string | null>(null);
 
   const filtered = useMemo(() => songs.filter((song) =>
     (category === "todos" || song.category === category) &&
@@ -42,21 +45,57 @@ export function AcervoManager({ initialSongs, initialAssets }: Props) {
   }
 
   async function removeSong(song: Song) {
-    if (!window.confirm(`Excluir "${song.title}"?`)) return;
     const supabase = createClient();
-    const { error } = await supabase.from("songs").delete().eq("id", song.id);
-    if (error) { setMessage(error.message); return; }
+    setDeletingSongId(song.id);
+    setMessage(null);
+    const confirmed = await confirmCascadeDelete(supabase, "songs", song.id, song.title, setMessage);
+    if (!confirmed) {
+      setDeletingSongId(null);
+      return;
+    }
+    const { error } = await supabase.rpc("delete_song_cascade", { p_song_id: song.id });
+    setDeletingSongId(null);
+    if (error) { setMessage(`Não foi possível excluir a música: ${error.message}`); return; }
     const storagePaths = assets
       .filter((asset) => asset.song_id === song.id && asset.file_url.startsWith("songs/"))
       .map((asset) => asset.file_url);
     setSongs((items) => items.filter((item) => item.id !== song.id));
     setAssets((items) => items.filter((item) => item.song_id !== song.id));
+    setExpanded((current) => current === song.id ? null : current);
     if (storagePaths.length > 0) {
       const removal = await supabase.storage.from("pentacordis-assets").remove(storagePaths);
       if (removal.error) {
-        setMessage(`Música removida, mas os arquivos não puderam ser apagados: ${removal.error.message}`);
+        setMessage(`Música e vínculos removidos, mas alguns arquivos não puderam ser apagados: ${removal.error.message}`);
       }
     }
+  }
+
+  async function saveSongChanges(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editingSong) return;
+    const form = event.currentTarget;
+    const values = new FormData(form);
+    const title = String(values.get("title") || "").trim();
+    if (!title) {
+      setMessage("Informe o título da música.");
+      return;
+    }
+    const payload = {
+      title,
+      composer: String(values.get("composer") || "").trim() || null,
+      category: String(values.get("category") || "").trim() || null,
+      default_key: String(values.get("default_key") || "").trim() || null,
+      duration_seconds: Number(values.get("duration_seconds")) || null,
+      is_pentacordis_arrangement: values.get("arrangement") === "on",
+    };
+    const result = await createClient().from("songs").update(payload).eq("id", editingSong.id).select("*").single();
+    if (result.error) {
+      setMessage(`Não foi possível atualizar o cadastro da música: ${result.error.message}`);
+      return;
+    }
+    setSongs((items) => items.map((item) => item.id === editingSong.id ? result.data : item));
+    setEditingSong(null);
+    setMessage("Cadastro global da música atualizado em todos os repertórios.");
   }
 
   async function uploadAsset(song: Song, event: FormEvent<HTMLFormElement>) {
@@ -101,6 +140,7 @@ export function AcervoManager({ initialSongs, initialAssets }: Props) {
   }
 
   async function removeAsset(asset: SongAsset) {
+    if (!window.confirm("Excluir este arquivo do acervo permanentemente?")) return;
     const supabase = createClient();
     const { error } = await supabase.from("song_assets").delete().eq("id", asset.id);
     if (error) { setMessage(error.message); return; }
@@ -142,14 +182,17 @@ export function AcervoManager({ initialSongs, initialAssets }: Props) {
               const isExpanded = expanded === song.id;
               return (
                 <article key={song.id} className="rounded-xl border border-border bg-surface">
-                  <button type="button" onClick={() => setExpanded(isExpanded ? null : song.id)} className="flex w-full items-center justify-between px-5 py-4 text-left">
-                    <div><p className="font-medium">{song.title}</p><p className="mt-1 text-xs text-muted">{song.composer ?? "Compositor não informado"} · {song.category ?? "Sem categoria"} · Tom {song.default_key ?? "—"}</p></div>
-                    <span className="text-xs text-gold">{songAssets.length} arquivo(s)</span>
-                  </button>
+                  <div className="flex items-center gap-3 px-5 py-4">
+                    <button type="button" onClick={() => setExpanded(isExpanded ? null : song.id)} aria-expanded={isExpanded} className="flex min-w-0 flex-1 items-center justify-between text-left">
+                      <div className="min-w-0"><p className="truncate font-medium">{song.title}</p><p className="mt-1 truncate text-xs text-muted">{song.composer ?? "Compositor não informado"} · {song.category ?? "Sem categoria"} · Tom {song.default_key ?? "—"}</p></div>
+                      <span className="ml-3 shrink-0 text-xs text-gold">{songAssets.length} arquivo(s)</span>
+                    </button>
+                    <button type="button" onClick={() => setEditingSong(song)} title="Editar cadastro global" aria-label={`Editar música ${song.title}`} className="grid size-8 shrink-0 place-items-center text-muted hover:text-gold"><Pencil size={14} /></button>
+                  </div>
                   {isExpanded ? <div className="border-t border-border p-5">
                     <div className="mb-4 space-y-2">{songAssets.map((asset) => <div key={asset.id} className="flex items-center justify-between rounded-lg border border-border px-3 py-2">
                       <div className="flex min-w-0 items-center gap-2">{asset.asset_type === "audio_guia" ? <FileAudio size={16} className="shrink-0 text-gold" /> : <FileText size={16} className="shrink-0 text-gold" />}<a href={asset.signed_url} target="_blank" rel="noreferrer" className="truncate text-xs text-muted hover:text-gold">{asset.asset_type} · {asset.target_role}</a></div>
-                      <button type="button" onClick={() => removeAsset(asset)} className="ml-3 text-xs text-red-300">Excluir</button>
+                      <button type="button" onClick={() => removeAsset(asset)} title="Excluir arquivo" aria-label={`Excluir arquivo ${asset.asset_type}`} className="ml-3 grid size-8 shrink-0 place-items-center text-muted hover:text-red-400"><Trash2 size={13} /></button>
                     </div>)}</div>
                     <form onSubmit={(event) => uploadAsset(song, event)} className="grid gap-3 rounded-lg border border-dashed border-border p-4 sm:grid-cols-2">
                       <label className="sm:col-span-2 flex h-10 items-center gap-2 rounded-lg border border-border px-3 text-xs text-muted"><Upload size={15} /><input name="file" type="file" required accept=".pdf,.mp3,.wav,audio/*,application/pdf" className="min-w-0 text-xs" /></label>
@@ -158,7 +201,7 @@ export function AcervoManager({ initialSongs, initialAssets }: Props) {
                       <input name="key_signature" placeholder="Tonalidade" className="h-10 rounded-lg border border-border bg-background px-3 text-sm" />
                       <button type="submit" className="h-10 rounded-lg border border-gold/30 text-sm text-gold">Enviar arquivo</button>
                     </form>
-                    <button type="button" onClick={() => removeSong(song)} className="mt-4 text-xs text-red-300">Excluir música</button>
+                    <button type="button" disabled={deletingSongId === song.id} onClick={() => void removeSong(song)} title="Excluir música dos repertórios e do acervo" aria-label={`Excluir música ${song.title}`} className="mt-4 grid size-8 place-items-center text-muted hover:text-red-400 disabled:opacity-40"><Trash2 size={14} /></button>
                   </div> : null}
                 </article>
               );
@@ -166,6 +209,23 @@ export function AcervoManager({ initialSongs, initialAssets }: Props) {
           </div>
         </section>
       </div>
+      {editingSong ? <div className="fixed inset-0 z-[70] grid place-items-center bg-black/70 p-5">
+        <form onSubmit={saveSongChanges} className="w-full max-w-md rounded-xl border border-border bg-white p-6">
+          <h2 className="mb-5 text-lg font-semibold">Editar música no acervo global</h2>
+          <div className="space-y-3">
+            <label className="block text-sm">Título<input name="title" required defaultValue={editingSong.title} className="mt-1 h-10 w-full rounded-lg border border-border bg-background px-3" /></label>
+            <label className="block text-sm">Compositor<input name="composer" defaultValue={editingSong.composer ?? ""} className="mt-1 h-10 w-full rounded-lg border border-border bg-background px-3" /></label>
+            <label className="block text-sm">Categoria<input name="category" defaultValue={editingSong.category ?? ""} className="mt-1 h-10 w-full rounded-lg border border-border bg-background px-3" /></label>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block text-sm">Tom padrão<input name="default_key" defaultValue={editingSong.default_key ?? ""} className="mt-1 h-10 w-full rounded-lg border border-border bg-background px-3" /></label>
+              <label className="block text-sm">Duração (segundos)<input name="duration_seconds" type="number" min="0" defaultValue={editingSong.duration_seconds ?? ""} className="mt-1 h-10 w-full rounded-lg border border-border bg-background px-3" /></label>
+            </div>
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="arrangement" defaultChecked={editingSong.is_pentacordis_arrangement} className="accent-gold" />Arranjo Pentacordis</label>
+          </div>
+          <p className="mt-3 text-xs text-muted">Título e compositor atualizados aqui mudam em todos os repertórios que usam esta música.</p>
+          <div className="mt-6 flex justify-end gap-2"><button type="button" onClick={() => setEditingSong(null)} className="h-10 rounded-lg border border-border px-4 text-sm">Cancelar</button><button type="submit" className="h-10 rounded-lg bg-gold px-5 text-sm font-bold text-zinc-950">Salvar</button></div>
+        </form>
+      </div> : null}
     </div>
   );
 }

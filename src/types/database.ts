@@ -136,6 +136,34 @@ export type Database = {
         Args: { p_lead_id: string };
         Returns: { contract: Contract; event: EventRow };
       };
+      preview_delete_dependencies: {
+        Args: { p_resource: string; p_record_id: string };
+        Returns: Json;
+      };
+      delete_event_cascade: {
+        Args: { p_event_id: string };
+        Returns: undefined;
+      };
+      delete_proposal_cascade: {
+        Args: { p_proposal_id: string };
+        Returns: undefined;
+      };
+      delete_contract_cascade: {
+        Args: { p_contract_id: string };
+        Returns: undefined;
+      };
+      delete_lead_cascade: {
+        Args: { p_lead_id: string };
+        Returns: undefined;
+      };
+      delete_song_cascade: {
+        Args: { p_song_id: string };
+        Returns: undefined;
+      };
+      delete_event_setlist_item: {
+        Args: { p_event_id: string; p_item_id: string };
+        Returns: undefined;
+      };
       reorder_event_setlist: {
         Args: { p_event_id: string; p_ordered_ids: string[] };
         Returns: undefined;

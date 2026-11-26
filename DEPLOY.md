@@ -26,6 +26,12 @@ A conta que aprova precisa ter um papel ativo com `insert` em `contracts` e `eve
 
 Como a conta `pentacordis@gmail.com` foi designada administradora, aplique uma única vez `supabase/migrations/010_assign_admin_to_pentacordis_account.sql` no SQL Editor. A conta já deve existir em Supabase Auth; a migration falha explicitamente se não a encontrar. Ela ativa somente o papel `admin` dessa conta.
 
+### Exclusões e edição do repertório
+
+Depois de aplicar o SQL Master e as migrations anteriores, aplique uma única vez `supabase/migrations/011_confirmed_cascade_deletes.sql`. Ela habilita a prévia de vínculos e as exclusões em cascata de eventos, leads, contratos, propostas e músicas. O usuário precisa ter permissão `delete` nos recursos afetados; `owner` e `admin` têm acesso administrativo.
+
+As telas pedem confirmação e mostram os vínculos encontrados antes de excluir. Lançamentos financeiros e dados de auditoria são preservados e desvinculados quando necessário. No evento, as músicas do repertório podem ser editadas, removidas e reordenadas sem alterar o cadastro global; o Acervo permite editar os dados globais da música.
+
 ### Inteligência Maestro — Fase 4
 
 Não há migration adicional para a Fase 4: a página `/maestro` usa as tabelas e colunas já criadas pelo `Pentacordis_Database_Master.sql`. As permissões de leitura/gravação do perfil de produção para `maestro_rule_sets`, `maestro_rules`, `maestro_recommendations`, `maestro_feedback`, disponibilidade, acervo e eventos precisam estar ativas.

@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { FileText, Plus } from "lucide-react";
+import { FileText, Plus, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { confirmCascadeDelete } from "@/lib/confirm-cascade-delete";
 import type { ProposalStatus } from "@/types/database";
 
 type SavedProposal = {
@@ -32,6 +33,7 @@ export function ProposalsManager({ initialProposals }: { initialProposals: Saved
   const [proposals, setProposals] = useState(initialProposals);
   const [message, setMessage] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   async function markAsSent(proposal: SavedProposal) {
     setSavingId(proposal.id);
@@ -49,6 +51,31 @@ export function ProposalsManager({ initialProposals }: { initialProposals: Saved
       return;
     }
     setProposals((items) => items.map((item) => item.id === proposal.id ? result.data : item));
+  }
+
+  async function removeProposal(proposal: SavedProposal) {
+    setDeletingId(proposal.id);
+    setMessage(null);
+    const supabase = createClient();
+    const confirmed = await confirmCascadeDelete(
+      supabase,
+      "proposals",
+      proposal.id,
+      `proposta #${proposal.proposal_number}`,
+      setMessage,
+    );
+    if (!confirmed) {
+      setDeletingId(null);
+      return;
+    }
+    const result = await supabase.rpc("delete_proposal_cascade", { p_proposal_id: proposal.id });
+    setDeletingId(null);
+    if (result.error) {
+      setMessage(`Não foi possível excluir a proposta: ${result.error.message}`);
+      return;
+    }
+    setProposals((items) => items.filter((item) => item.id !== proposal.id));
+    setMessage(`Proposta #${proposal.proposal_number} e itens vinculados excluídos.`);
   }
 
   return (
@@ -88,6 +115,9 @@ export function ProposalsManager({ initialProposals }: { initialProposals: Saved
                   {savingId === proposal.id ? "Salvando..." : "Marcar enviada"}
                 </button>
               ) : null}
+              <button type="button" disabled={deletingId === proposal.id} onClick={() => void removeProposal(proposal)} title="Excluir proposta e itens" aria-label={`Excluir proposta ${proposal.proposal_number}`} className="grid size-9 place-items-center text-neutral-400 transition-colors hover:text-red-700 disabled:opacity-40">
+                <Trash2 size={14} />
+              </button>
             </div>
           </article>
         ))}

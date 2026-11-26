@@ -2,9 +2,11 @@
 
 import { useMemo, useState, type FormEvent } from "react";
 import Link from "next/link";
-import { Check, Copy, FileText, MessageCircle, Plus, ReceiptText } from "lucide-react";
+import { Check, Copy, FileText, MessageCircle, Plus, ReceiptText, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { confirmCascadeDelete } from "@/lib/confirm-cascade-delete";
 import { formatDateLongBR, formatDateTimeRecifeBR } from "@/lib/format-contract";
 import type { Contract, EventRow, Installment, Lead, LeadStatus } from "@/types/database";
 import { EditorialEmpty } from "@/components/ui/editorial-empty";
@@ -32,6 +34,7 @@ export function CommercialManager({
   initialTab = "leads",
   openLeadModalOnLoad = false,
 }: Props) {
+  const router = useRouter();
   const [leads, setLeads] = useState(initialLeads);
   const [contracts, setContracts] = useState(initialContracts);
   const [installments, setInstallments] = useState(initialInstallments);
@@ -41,6 +44,7 @@ export function CommercialManager({
   const [leadModal, setLeadModal] = useState(openLeadModalOnLoad);
   const [message, setMessage] = useState<string | null>(null);
   const [copiedContractId, setCopiedContractId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const filteredLeads = useMemo(
     () => leads.filter((lead) => filter === "todos" || lead.status === filter),
@@ -117,6 +121,31 @@ export function CommercialManager({
     setLeads((items) => items.map((item) => item.id === lead.id ? result.data : item));
   }
 
+  async function removeLead(lead: Lead) {
+    setDeletingId(lead.id);
+    setMessage(null);
+    const supabase = createClient();
+    const confirmed = await confirmCascadeDelete(supabase, "leads", lead.id, lead.name, setMessage);
+    if (!confirmed) {
+      setDeletingId(null);
+      return;
+    }
+    const relatedContractIds = contracts.filter((item) => item.lead_id === lead.id).map((item) => item.id);
+    const result = await supabase.rpc("delete_lead_cascade", { p_lead_id: lead.id });
+    setDeletingId(null);
+    if (result.error) {
+      setMessage(`Não foi possível excluir o lead: ${result.error.message}`);
+      return;
+    }
+    const contractIds = new Set(relatedContractIds);
+    setLeads((items) => items.filter((item) => item.id !== lead.id));
+    setContracts((items) => items.filter((item) => !contractIds.has(item.id)));
+    setInstallments((items) => items.filter((item) => !contractIds.has(item.contract_id)));
+    setEvents((items) => items.filter((item) => !item.contract_id || !contractIds.has(item.contract_id)));
+    setMessage("Lead e registros comerciais vinculados excluídos.");
+    router.refresh();
+  }
+
   async function convertLead(lead: Lead) {
     const supabase = createClient();
     const result = await supabase.rpc("convert_lead_to_contract_and_event", { p_lead_id: lead.id });
@@ -129,6 +158,34 @@ export function CommercialManager({
     }, ...items.filter((item) => item.contract_id !== result.data.contract.id)]);
     setLeads((items) => items.map((item) => item.id === lead.id ? { ...item, status: "fechado" } : item));
     setMessage(`Lead convertido em contrato e evento ${result.data.event.id}.`);
+  }
+
+  async function removeContract(contract: Contract) {
+    setDeletingId(contract.id);
+    setMessage(null);
+    const supabase = createClient();
+    const confirmed = await confirmCascadeDelete(
+      supabase,
+      "contracts",
+      contract.id,
+      `contrato de ${contract.client_name}`,
+      setMessage,
+    );
+    if (!confirmed) {
+      setDeletingId(null);
+      return;
+    }
+    const result = await supabase.rpc("delete_contract_cascade", { p_contract_id: contract.id });
+    setDeletingId(null);
+    if (result.error) {
+      setMessage(`Não foi possível excluir o contrato: ${result.error.message}`);
+      return;
+    }
+    setContracts((items) => items.filter((item) => item.id !== contract.id));
+    setInstallments((items) => items.filter((item) => item.contract_id !== contract.id));
+    setEvents((items) => items.filter((item) => item.contract_id !== contract.id));
+    setMessage("Contrato e registros vinculados excluídos.");
+    router.refresh();
   }
 
   async function markPaid(installment: Installment) {
@@ -169,6 +226,7 @@ export function CommercialManager({
                 <div className="mt-5 flex gap-2">
                   <select value={lead.status} onChange={(event) => updateLeadStatus(lead, event.target.value as LeadStatus)} className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-background px-2 text-xs"><option value="novo">Novo</option><option value="proposta">Proposta</option><option value="fechado">Fechado</option><option value="perdido">Perdido</option></select>
                   {lead.status !== "fechado" ? <button type="button" onClick={() => convertLead(lead)} className="h-9 rounded-lg bg-gold px-3 text-xs font-bold text-zinc-950">Converter</button> : null}
+                  <button type="button" disabled={deletingId === lead.id} onClick={() => void removeLead(lead)} title="Excluir lead e registros vinculados" aria-label={`Excluir lead ${lead.name}`} className="grid size-9 shrink-0 place-items-center text-muted transition-colors hover:text-red-400 disabled:opacity-40"><Trash2 size={14} /></button>
                 </div>
               </article>
             ))}
@@ -205,6 +263,7 @@ export function CommercialManager({
                       <Link href={`/comercial/contratos/${contract.id}/documento`} className="inline-flex h-9 items-center gap-2 border border-border px-3 text-xs uppercase tracking-wide hover:border-black">
                         <FileText size={14} /> Contrato PDF
                       </Link>
+                      <button type="button" disabled={deletingId === contract.id} onClick={() => void removeContract(contract)} title="Excluir contrato e registros vinculados" aria-label={`Excluir contrato de ${contract.client_name}`} className="grid size-9 place-items-center text-muted transition-colors hover:text-red-400 disabled:opacity-40"><Trash2 size={14} /></button>
                     </div>
                   </div>
                 ))}

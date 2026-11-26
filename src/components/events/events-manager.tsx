@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { useMemo, useState, type FormEvent } from "react";
-import { CalendarDays, Plus } from "lucide-react";
+import { CalendarDays, Plus, Trash2 } from "lucide-react";
 import { motion } from "framer-motion";
 import { DURATION_BASE, EASE_EDITORIAL } from "@/lib/motion";
 import { EditorialEmpty } from "@/components/ui/editorial-empty";
 import { createClient } from "@/lib/supabase/client";
+import { confirmCascadeDelete } from "@/lib/confirm-cascade-delete";
 import type { EventRow, EventStatus } from "@/types/database";
 
 export function EventsManager({
@@ -20,6 +21,7 @@ export function EventsManager({
   const [filter, setFilter] = useState<"todos" | "futuros" | "passados" | string>("todos");
   const [creating, setCreating] = useState(openCreateOnLoad);
   const [message, setMessage] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [view, setView] = useState<"lista" | "calendario">("lista");
   const [calendarMonth, setCalendarMonth] = useState(() => {
     const now = new Date();
@@ -50,6 +52,25 @@ export function EventsManager({
     if (result.error) { setMessage(result.error.message); return; }
     setEvents((items) => [result.data, ...items]);
     setCreating(false);
+  }
+
+  async function removeEvent(event: EventRow) {
+    setDeletingId(event.id);
+    setMessage(null);
+    const supabase = createClient();
+    const confirmed = await confirmCascadeDelete(supabase, "events", event.id, event.title, setMessage);
+    if (!confirmed) {
+      setDeletingId(null);
+      return;
+    }
+    const result = await supabase.rpc("delete_event_cascade", { p_event_id: event.id });
+    setDeletingId(null);
+    if (result.error) {
+      setMessage(`Não foi possível excluir o evento: ${result.error.message}`);
+      return;
+    }
+    setEvents((items) => items.filter((item) => item.id !== event.id));
+    setMessage("Evento e dependências excluídos.");
   }
 
   const eventTypes = Array.from(new Set(events.map((event) => event.event_type).filter((value): value is string => Boolean(value))));
@@ -93,12 +114,20 @@ export function EventsManager({
       </div>
       {filtered.length === 0 ? <EditorialEmpty title="Nenhum evento encontrado" description="Ajuste os filtros ou crie uma nova produção." /> : view === "lista" ? <div className="grid gap-px border border-neutral-200 bg-neutral-200 md:grid-cols-2 xl:grid-cols-3">
         {filtered.map((event) => (
-          <Link href={`/eventos/${event.id}`} key={event.id} className="bg-white p-6 transition-colors duration-500 hover:bg-neutral-50">
-            <div className="flex items-start justify-between"><CalendarDays size={17} className="text-neutral-400" /><span className="flex items-center gap-2 text-[9px] uppercase tracking-[0.16em] text-neutral-500"><span className="h-1.5 w-1.5 rounded-full bg-neutral-700" />{event.status}</span></div>
-            <h2 className="mt-6 font-light text-2xl">{event.title}</h2>
-            <p className="tabular-nums mt-2 text-xs text-neutral-500">{new Intl.DateTimeFormat("pt-BR", { dateStyle: "long" }).format(new Date(`${event.event_date}T12:00:00`))}</p>
-            <p className="mt-4 truncate text-xs text-neutral-500">{event.venue_name ?? "Local a definir"}</p>
-          </Link>
+          <article key={event.id} className="bg-white p-6 transition-colors duration-500 hover:bg-neutral-50">
+            <div className="flex items-start justify-between">
+              <Link href={`/eventos/${event.id}`} aria-label={`Abrir ${event.title}`}><CalendarDays size={17} className="text-neutral-400" /></Link>
+              <div className="flex items-center gap-3">
+                <span className="flex items-center gap-2 text-[9px] uppercase tracking-[0.16em] text-neutral-500"><span className="h-1.5 w-1.5 rounded-full bg-neutral-700" />{event.status}</span>
+                <button type="button" disabled={deletingId === event.id} onClick={() => void removeEvent(event)} title="Excluir evento" aria-label={`Excluir evento ${event.title}`} className="grid size-7 place-items-center text-neutral-400 transition-colors hover:text-red-700 disabled:opacity-40"><Trash2 size={14} /></button>
+              </div>
+            </div>
+            <Link href={`/eventos/${event.id}`} className="block">
+              <h2 className="mt-6 font-light text-2xl">{event.title}</h2>
+              <p className="tabular-nums mt-2 text-xs text-neutral-500">{new Intl.DateTimeFormat("pt-BR", { dateStyle: "long" }).format(new Date(`${event.event_date}T12:00:00`))}</p>
+              <p className="mt-4 truncate text-xs text-neutral-500">{event.venue_name ?? "Local a definir"}</p>
+            </Link>
+          </article>
         ))}
       </div> : (
         <section className="border border-neutral-200">
@@ -119,7 +148,12 @@ export function EventsManager({
                 <div key={iso} className={`min-h-28 border-b border-r border-neutral-200 p-2 last:border-r-0 ${outside ? "bg-neutral-50 text-neutral-300" : "bg-white"}`}>
                   <p className="tabular-nums text-xs">{date.getDate()}</p>
                   <div className="mt-2 space-y-1">
-                    {dayEvents.map((event) => <Link key={event.id} href={`/eventos/${event.id}`} className="block border-l border-black pl-2 text-[10px] leading-4 text-neutral-700">{event.title}</Link>)}
+                    {dayEvents.map((event) => (
+                      <div key={event.id} className="flex items-center border-l border-black pl-2">
+                        <Link href={`/eventos/${event.id}`} className="min-w-0 flex-1 truncate text-[10px] leading-4 text-neutral-700">{event.title}</Link>
+                        <button type="button" disabled={deletingId === event.id} onClick={() => void removeEvent(event)} title="Excluir evento" aria-label={`Excluir evento ${event.title}`} className="grid size-6 shrink-0 place-items-center text-neutral-400 hover:text-red-700 disabled:opacity-40"><Trash2 size={11} /></button>
+                      </div>
+                    ))}
                   </div>
                 </div>
               );

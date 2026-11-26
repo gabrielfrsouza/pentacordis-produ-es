@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import Link from "next/link";
-import { Check, Copy, FileText, GripVertical, Link as LinkIcon, MapPin, MessageCircle, Plus, Sparkles } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, Copy, FileText, GripVertical, Link as LinkIcon, MapPin, MessageCircle, Pencil, Plus, Sparkles, Trash2 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
@@ -51,11 +51,23 @@ function SortableSetlistItem({
   index,
   songTitle,
   defaultKey,
+  canMoveUp,
+  canMoveDown,
+  onEdit,
+  onDelete,
+  onMoveUp,
+  onMoveDown,
 }: {
   item: EventSetlist;
   index: number;
   songTitle: string;
   defaultKey: string | null;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+  onEdit: () => void;
+  onDelete: () => void;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id });
   const style = {
@@ -67,15 +79,21 @@ function SortableSetlistItem({
     <article
       ref={setNodeRef}
       style={style}
-      className={`grid grid-cols-[44px_32px_1fr] items-center gap-2 rounded-none border border-neutral-200 bg-white p-3 ${isDragging ? "opacity-50" : ""}`}
+      className={`grid grid-cols-[36px_32px_minmax(0,1fr)_auto] items-center gap-2 rounded-none border border-neutral-200 bg-white p-3 ${isDragging ? "opacity-50" : ""}`}
     >
-      <div className="tabular-nums grid size-8 place-items-center rounded-none bg-neutral-100 text-xs font-medium">{index + 1}</div>
+      <div className="tabular-nums grid size-7 place-items-center rounded-none bg-neutral-100 text-xs font-medium">{index + 1}</div>
       <button type="button" {...attributes} {...listeners} className="grid size-8 cursor-grab place-items-center text-neutral-400 active:cursor-grabbing" aria-label={`Reordenar ${songTitle}`}>
         <GripVertical size={16} />
       </button>
-      <div>
+      <div className="min-w-0">
         <p className="font-light text-lg">{songTitle}</p>
         <p className="tabular-nums mt-1 text-[11px] text-neutral-500">{item.moment_label ?? "Sem momento"} · Tom {item.event_key ?? defaultKey ?? "—"} · {item.performance_notes ?? ""}</p>
+      </div>
+      <div className="flex items-center">
+        <button type="button" disabled={!canMoveUp} onClick={onMoveUp} title="Mover para cima" aria-label={`Mover ${songTitle} para cima`} className="grid size-7 place-items-center text-neutral-400 hover:text-black disabled:opacity-25"><ArrowUp size={13} /></button>
+        <button type="button" disabled={!canMoveDown} onClick={onMoveDown} title="Mover para baixo" aria-label={`Mover ${songTitle} para baixo`} className="grid size-7 place-items-center text-neutral-400 hover:text-black disabled:opacity-25"><ArrowDown size={13} /></button>
+        <button type="button" onClick={onEdit} title="Editar música neste evento" aria-label={`Editar ${songTitle} neste evento`} className="grid size-7 place-items-center text-neutral-400 hover:text-gold"><Pencil size={13} /></button>
+        <button type="button" onClick={onDelete} title="Remover do repertório deste evento" aria-label={`Remover ${songTitle} deste evento`} className="grid size-7 place-items-center text-neutral-400 hover:text-red-700"><Trash2 size={13} /></button>
       </div>
     </article>
   );
@@ -97,6 +115,8 @@ export function EventWorkspace({
   const [tab, setTab] = useState<Tab>("Ordem do Dia");
   const [lineup, setLineup] = useState(initialLineup);
   const [setlist, setSetlist] = useState(initialSetlist);
+  const [editingSetlistItem, setEditingSetlistItem] = useState<EventSetlist | null>(null);
+  const [reorderingSetlist, setReorderingSetlist] = useState(false);
   const [allocations, setAllocations] = useState(initialAllocations);
   const [expenses, setExpenses] = useState(initialExpenses);
   const [message, setMessage] = useState<string | null>(null);
@@ -274,11 +294,27 @@ export function EventWorkspace({
     setLineup((items) => items.map((item) => item.id === id ? result.data : item));
   }
 
+  async function removeLineup(item: EventLineup) {
+    const paidWarning = item.payment_status === "pago" ? "\nEsta vaga está marcada como paga." : "";
+    if (!window.confirm(`Remover a vaga "${item.role_needed}" da escala?${paidWarning}`)) return;
+    const result = await createClient()
+      .from("event_lineup")
+      .delete()
+      .eq("id", item.id)
+      .eq("event_id", event.id);
+    if (result.error) {
+      setMessage(`Não foi possível remover a vaga da escala: ${result.error.message}`);
+      return;
+    }
+    setLineup((items) => items.filter((entry) => entry.id !== item.id));
+    setMessage("Vaga removida da escala.");
+  }
+
   async function addSetlistSong(eventForm: FormEvent<HTMLFormElement>) {
     eventForm.preventDefault();
     const form = new FormData(eventForm.currentTarget);
     const supabase = createClient();
-    const nextOrder = setlist.length;
+    const nextOrder = Math.max(-1, ...setlist.map((item) => item.order_index)) + 1;
     const payload = {
       event_id: event.id,
       song_id: String(form.get("song_id")),
@@ -292,6 +328,54 @@ export function EventWorkspace({
     setSetlist((items) => [...items, result.data].sort((a, b) => a.order_index - b.order_index));
   }
 
+  async function saveSetlistItem(eventForm: FormEvent<HTMLFormElement>) {
+    eventForm.preventDefault();
+    if (!editingSetlistItem) return;
+    const form = eventForm.currentTarget;
+    const values = new FormData(form);
+    const payload = {
+      song_id: String(values.get("song_id") || ""),
+      moment_label: String(values.get("moment_label") || "").trim() || null,
+      event_key: String(values.get("event_key") || "").trim() || null,
+      performance_notes: String(values.get("performance_notes") || "").trim() || null,
+    };
+    if (!payload.song_id) {
+      setMessage("Selecione uma música para este repertório.");
+      return;
+    }
+    const result = await createClient()
+      .from("event_setlist")
+      .update(payload)
+      .eq("id", editingSetlistItem.id)
+      .eq("event_id", event.id)
+      .select("*")
+      .single();
+    if (result.error) {
+      setMessage(`Não foi possível editar a música no evento: ${result.error.message}`);
+      return;
+    }
+    setSetlist((items) => items.map((item) => item.id === result.data.id ? result.data : item));
+    setEditingSetlistItem(null);
+    setMessage("Música atualizada neste evento.");
+  }
+
+  async function removeSetlistItem(item: EventSetlist) {
+    const song = songs.find((entry) => entry.id === item.song_id);
+    if (!window.confirm(`Remover "${song?.title ?? "esta música"}" do repertório deste evento?\n\nO cadastro global da música permanecerá no acervo.`)) return;
+    const result = await createClient().rpc("delete_event_setlist_item", {
+      p_event_id: event.id,
+      p_item_id: item.id,
+    });
+    if (result.error) {
+      setMessage(`Não foi possível remover a música do repertório: ${result.error.message}`);
+      return;
+    }
+    setSetlist((items) => items
+      .filter((entry) => entry.id !== item.id)
+      .map((entry, index) => ({ ...entry, order_index: index })));
+    setMessage("Música removida deste evento e ordem atualizada.");
+  }
+
   async function persistSetlistOrder(items: EventSetlist[]) {
     const supabase = createClient();
     return supabase.rpc("reorder_event_setlist", {
@@ -300,20 +384,26 @@ export function EventWorkspace({
     });
   }
 
-  async function handleSetlistDragEnd(dragEvent: DragEndEvent) {
-    const { active, over } = dragEvent;
-    if (!over || active.id === over.id) return;
-    const oldIndex = setlist.findIndex((item) => item.id === active.id);
-    const newIndex = setlist.findIndex((item) => item.id === over.id);
-    if (oldIndex < 0 || newIndex < 0) return;
+  async function reorderSetlist(oldIndex: number, newIndex: number) {
+    if (reorderingSetlist || oldIndex < 0 || newIndex < 0 || oldIndex === newIndex) return;
+    setReorderingSetlist(true);
     const reordered = arrayMove(setlist, oldIndex, newIndex).map((item, index) => ({
       ...item,
       order_index: index,
     }));
     const result = await persistSetlistOrder(reordered);
-    if (result.error) { setMessage(result.error.message); return; }
+    setReorderingSetlist(false);
+    if (result.error) { setMessage(`Não foi possível reordenar o repertório: ${result.error.message}`); return; }
     setSetlist(reordered);
     toast.success("Ordem do repertório atualizada");
+  }
+
+  async function handleSetlistDragEnd(dragEvent: DragEndEvent) {
+    const { active, over } = dragEvent;
+    if (!over || active.id === over.id) return;
+    const oldIndex = setlist.findIndex((item) => item.id === active.id);
+    const newIndex = setlist.findIndex((item) => item.id === over.id);
+    await reorderSetlist(oldIndex, newIndex);
   }
 
   async function allocateEquipment(eventForm: FormEvent<HTMLFormElement>) {
@@ -336,6 +426,22 @@ export function EventWorkspace({
     const result = await supabase.from("event_equipment").update(changes).eq("id", id).select("*").single();
     if (result.error) { setMessage(result.error.message); return; }
     setAllocations((items) => items.map((item) => item.id === id ? result.data : item));
+  }
+
+  async function removeAllocation(allocation: EventEquipment) {
+    const equipmentName = equipment.find((item) => item.id === allocation.equipment_id)?.name ?? "equipamento";
+    if (!window.confirm(`Remover a alocação de "${equipmentName}" deste evento?`)) return;
+    const result = await createClient()
+      .from("event_equipment")
+      .delete()
+      .eq("id", allocation.id)
+      .eq("event_id", event.id);
+    if (result.error) {
+      setMessage(`Não foi possível remover a alocação: ${result.error.message}`);
+      return;
+    }
+    setAllocations((items) => items.filter((item) => item.id !== allocation.id));
+    setMessage("Alocação removida.");
   }
 
   async function addExpense(eventForm: FormEvent<HTMLFormElement>) {
@@ -461,13 +567,16 @@ export function EventWorkspace({
               const phone = titular?.phone?.replace(/\D/g, "") ?? "";
               const messageText = `Olá ${titular?.stage_name ?? titular?.full_name ?? ""}! Convite Pentacordis para ${event.title} em ${event.event_date}. Função: ${item.role_needed}. Cachê: ${money(Number(item.negotiated_fee ?? 0))}.`;
               return (
-                <article key={item.id} className="grid gap-3 rounded-xl border border-border bg-surface p-4 lg:grid-cols-[150px_1fr_1fr_140px_120px_44px] lg:items-center">
+                <article key={item.id} className="grid gap-3 rounded-xl border border-border bg-surface p-4 lg:grid-cols-[150px_1fr_1fr_140px_120px_80px] lg:items-center">
                   <p className="text-sm font-semibold text-gold">{item.role_needed}</p>
                   <select value={item.musician_id ?? ""} onChange={(eventChange) => { const value = eventChange.target.value || null; void checkMusicianConflict(value ?? "", item.id); void updateLineup(item.id, { musician_id: value }); }} className="h-10 rounded-lg border border-border bg-background px-3 text-sm"><option value="">Titular não definido</option>{roleMusicians.map((musician) => <option key={musician.id} value={musician.id}>{musician.full_name}</option>)}</select>
                   <select value={item.backup_musician_id ?? ""} onChange={(eventChange) => { const value = eventChange.target.value || null; void checkMusicianConflict(value ?? "", `${item.id}-backup`); void updateLineup(item.id, { backup_musician_id: value }); }} className="h-10 rounded-lg border border-border bg-background px-3 text-sm"><option value="">Reserva não definida</option>{backupMusicians.map((musician) => <option key={musician.id} value={musician.id}>{musician.full_name}</option>)}</select>
                   <select value={item.invite_status} onChange={(eventChange) => updateLineup(item.id, { invite_status: eventChange.target.value as InviteStatus })} className="h-10 rounded-lg border border-border bg-background px-3 text-sm"><option value="pendente">Pendente</option><option value="convidado">Convidado</option><option value="confirmado">Confirmado</option><option value="recusado">Recusado</option></select>
                   <input type="number" defaultValue={item.negotiated_fee ?? 0} onBlur={(eventChange) => updateLineup(item.id, { negotiated_fee: Number(eventChange.target.value) })} className="h-10 rounded-lg border border-border bg-background px-3 text-sm" />
-                  {phone ? <a href={`https://wa.me/${phone}?text=${encodeURIComponent(messageText)}`} target="_blank" rel="noreferrer" className="grid h-10 place-items-center rounded-lg border border-emerald-500/30 text-emerald-300" title="Enviar convite no WhatsApp"><MessageCircle size={16} /></a> : <span />}
+                  <div className="flex items-center justify-end gap-1">
+                    {phone ? <a href={`https://wa.me/${phone}?text=${encodeURIComponent(messageText)}`} target="_blank" rel="noreferrer" className="grid h-10 w-8 place-items-center rounded-lg border border-emerald-500/30 text-emerald-300" title="Enviar convite no WhatsApp"><MessageCircle size={16} /></a> : null}
+                    <button type="button" onClick={() => void removeLineup(item)} title="Remover vaga da escala" aria-label={`Remover vaga ${item.role_needed}`} className="grid size-8 place-items-center text-neutral-400 hover:text-red-700"><Trash2 size={14} /></button>
+                  </div>
                   {(conflicts[item.id] ?? []).length > 0 ? (
                     <div className="lg:col-span-6 border-l border-black bg-neutral-50 px-4 py-3 text-xs text-neutral-700">
                       Análise de disponibilidade do titular: {conflicts[item.id].join(" · ")}
@@ -505,6 +614,12 @@ export function EventWorkspace({
                         index={index}
                         songTitle={song?.title ?? "Música"}
                         defaultKey={song?.default_key ?? null}
+                        canMoveUp={!reorderingSetlist && index > 0}
+                        canMoveDown={!reorderingSetlist && index < setlist.length - 1}
+                        onEdit={() => setEditingSetlistItem(item)}
+                        onDelete={() => void removeSetlistItem(item)}
+                        onMoveUp={() => void reorderSetlist(index, index - 1)}
+                        onMoveDown={() => void reorderSetlist(index, index + 1)}
                       />
                     );
                   })}
@@ -526,7 +641,7 @@ export function EventWorkspace({
           {allocations.length === 0 ? <div className="grid min-h-48 place-items-center rounded-xl border border-border bg-surface text-sm text-muted">Nenhum item alocado.</div> : <div className="space-y-2">
             {allocations.map((allocation) => {
               const item = equipment.find((entry) => entry.id === allocation.equipment_id);
-              return <article key={allocation.id} className="grid gap-3 rounded-xl border border-border bg-surface p-4 sm:grid-cols-[1fr_100px_120px_120px] sm:items-center"><div><p className="font-medium">{item?.name ?? "Equipamento"}</p><p className="mt-1 text-xs text-muted">Quantidade {allocation.quantity_allocated}</p></div><span /><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={allocation.checked_out} onChange={(eventChange) => updateAllocation(allocation.id, { checked_out: eventChange.target.checked })} className="accent-gold" />Saiu</label><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={allocation.checked_in} onChange={(eventChange) => updateAllocation(allocation.id, { checked_in: eventChange.target.checked })} className="accent-gold" />Voltou</label></article>;
+              return <article key={allocation.id} className="grid gap-3 rounded-xl border border-border bg-surface p-4 sm:grid-cols-[1fr_36px_120px_120px] sm:items-center"><div><p className="font-medium">{item?.name ?? "Equipamento"}</p><p className="mt-1 text-xs text-muted">Quantidade {allocation.quantity_allocated}</p></div><button type="button" onClick={() => void removeAllocation(allocation)} title="Remover alocação" aria-label={`Remover alocação de ${item?.name ?? "equipamento"}`} className="grid size-8 place-items-center text-neutral-400 hover:text-red-700"><Trash2 size={14} /></button><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={allocation.checked_out} onChange={(eventChange) => updateAllocation(allocation.id, { checked_out: eventChange.target.checked })} className="accent-gold" />Saiu</label><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={allocation.checked_in} onChange={(eventChange) => updateAllocation(allocation.id, { checked_in: eventChange.target.checked })} className="accent-gold" />Voltou</label></article>;
             })}
           </div>}
         </div>
@@ -572,6 +687,21 @@ export function EventWorkspace({
       ) : null}
         </motion.div>
       </AnimatePresence>
+      {editingSetlistItem ? <div className="fixed inset-0 z-[70] grid place-items-center bg-black/70 p-5">
+        <form onSubmit={saveSetlistItem} className="w-full max-w-lg rounded-xl border border-border bg-white p-6">
+          <h2 className="mb-5 text-lg font-semibold">Editar música neste evento</h2>
+          <div className="space-y-3">
+            <label className="block text-sm">Música<select name="song_id" required defaultValue={editingSetlistItem.song_id} className="mt-1 h-10 w-full rounded-lg border border-border bg-background px-3">{songs.map((song) => <option key={song.id} value={song.id}>{song.title}</option>)}</select></label>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block text-sm">Momento<input name="moment_label" defaultValue={editingSetlistItem.moment_label ?? ""} className="mt-1 h-10 w-full rounded-lg border border-border bg-background px-3" /></label>
+              <label className="block text-sm">Tom neste evento<input name="event_key" defaultValue={editingSetlistItem.event_key ?? ""} className="mt-1 h-10 w-full rounded-lg border border-border bg-background px-3" /></label>
+            </div>
+            <label className="block text-sm">Notas de execução<textarea name="performance_notes" defaultValue={editingSetlistItem.performance_notes ?? ""} rows={3} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2" /></label>
+            <p className="text-xs text-muted">Para alterar o título, compositor ou tom padrão em todos os eventos, edite o <Link href="/acervo" className="text-gold underline underline-offset-2">cadastro global no Acervo</Link>.</p>
+          </div>
+          <div className="mt-6 flex justify-end gap-2"><button type="button" onClick={() => setEditingSetlistItem(null)} className="h-10 rounded-lg border border-border px-4 text-sm">Cancelar</button><button type="submit" className="h-10 rounded-lg bg-gold px-5 text-sm font-bold text-zinc-950">Salvar</button></div>
+        </form>
+      </div> : null}
     </div>
   );
 }
