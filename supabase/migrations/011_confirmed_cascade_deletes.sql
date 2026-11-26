@@ -402,3 +402,5 @@ GRANT EXECUTE ON FUNCTION public.delete_contract_cascade(UUID) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.delete_lead_cascade(UUID) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.delete_song_cascade(UUID) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.delete_event_setlist_item(UUID, UUID) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
