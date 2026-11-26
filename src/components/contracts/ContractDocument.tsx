@@ -203,7 +203,7 @@ export function ContractDocument({ contract, event, installments, signedDocument
       <section className="contract-clause mb-5">
         <h2 className="mb-2 text-[10pt] font-semibold uppercase tracking-wide">Qualificação das Partes</h2>
         <p>
-          <strong>CONTRATADA:</strong> {company.name}, inscrita no CNPJ/CPF sob nº {company.document}, com sede em {contractCity}.
+          <strong>CONTRATADA:</strong> {company.name}, inscrito no CPF sob nº {company.document}, com sede em {contractCity}, atuando como representante legal de PENTACORDIS PRODUÇÕES MUSICAIS.
         </p>
         <p className="mt-2">
           <strong>CONTRATANTE:</strong> {documentContract.client_name}, inscrito(a) no CPF/CNPJ sob nº {displayField(documentContract.cpf_cnpj)}, residente/sediado(a) em {displayField(documentContract.client_address)}.
