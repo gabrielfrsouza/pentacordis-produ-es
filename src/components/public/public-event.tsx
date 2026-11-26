@@ -10,7 +10,7 @@ import { DURATION_BASE, EASE_EDITORIAL } from "@/lib/motion";
 type PublicAsset = {
   asset_type: string;
   target_role: string;
-  file_url: string;
+  file_url: string | null;
   key_signature: string | null;
 };
 
@@ -49,6 +49,7 @@ type PublicEventData = {
 
 type Props = {
   eventData: unknown;
+  assetsUnavailable?: boolean;
 };
 
 function isPublicEventData(value: unknown): value is PublicEventData {
@@ -95,7 +96,7 @@ type ScreenWakeNavigator = Navigator & {
   };
 };
 
-export function PublicEvent({ eventData }: Props) {
+export function PublicEvent({ eventData, assetsUnavailable = false }: Props) {
   if (!isPublicEventData(eventData)) {
     return (
       <main className="grid min-h-screen place-items-center px-5 text-center">
@@ -103,10 +104,10 @@ export function PublicEvent({ eventData }: Props) {
       </main>
     );
   }
-  return <PublicEventContent event={eventData} />;
+  return <PublicEventContent event={eventData} assetsUnavailable={assetsUnavailable} />;
 }
 
-function PublicEventContent({ event }: { event: PublicEventData }) {
+function PublicEventContent({ event, assetsUnavailable }: { event: PublicEventData; assetsUnavailable: boolean }) {
   const [backstage, setBackstage] = useState(false);
   const [wakeLock, setWakeLock] = useState<ScreenWakeSentinel | null>(null);
   const [wakeMessage, setWakeMessage] = useState("");
@@ -178,6 +179,7 @@ function PublicEventContent({ event }: { event: PublicEventData }) {
         </div>
       </div>
       {wakeMessage ? <p className={`mb-3 text-[10px] uppercase tracking-[0.12em] ${backstage ? "text-neutral-400" : "text-neutral-500"}`}>{wakeMessage}</p> : null}
+      {assetsUnavailable ? <p role="status" className={`mb-4 rounded-lg border px-4 py-3 text-xs ${backstage ? "border-white/20 text-neutral-300" : "border-amber-300 bg-amber-50 text-amber-900"}`}>Os dados do evento estão disponíveis, mas alguns arquivos privados do repertório não puderam ser carregados.</p> : null}
 
       <header className={`relative overflow-hidden border p-6 ${backstage ? "border-white/15 bg-[#111111]" : "border-neutral-200 bg-white"}`}>
         <BrandMark variant="watermark" size="hero" className="absolute -bottom-8 -right-8" />
@@ -299,7 +301,9 @@ function PublicEventContent({ event }: { event: PublicEventData }) {
                         const isAudio = asset.asset_type === "audio_guia";
                         return (
                           <div key={`${asset.file_url}-${index}`} className="rounded-lg border border-border p-3">
-                            {isAudio ? (
+                            {!asset.file_url ? (
+                              <p className="text-xs text-muted">Arquivo temporariamente indisponível.</p>
+                            ) : isAudio ? (
                               <audio controls preload="none" className="w-full">
                                 <source src={asset.file_url} />
                               </audio>
