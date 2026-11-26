@@ -26,6 +26,12 @@ type PublicContractDocument = {
     | "included_structure"
     | "extra_hour_fee"
     | "contractor_city"
+    | "contractor_name"
+    | "contractor_document"
+    | "contractor_address"
+    | "contractor_phone"
+    | "contractor_email"
+    | "contractor_forum"
     | "status"
     | "signed_at"
   > & {
@@ -200,7 +206,7 @@ type Timestamps = {
 export type Lead = Timestamps & { id: string; name: string; phone: string | null; email: string | null; event_type: string | null; event_date: string | null; status: LeadStatus; estimated_value: number | null; notes: string | null };
 export type LeadInsert = Partial<Timestamps> & Omit<Lead, "id" | "created_at" | "updated_at"> & { id?: string };
 export type LeadUpdate = Partial<Lead>;
-export type Contract = Timestamps & { id: string; lead_id: string | null; client_name: string; cpf_cnpj: string | null; total_value: number; producer_margin_pct: number; tax_pct: number; contract_pdf_url: string | null; status: ContractStatus; signed_at: string | null; client_address: string | null; client_phone: string | null; client_email: string | null; duration_label: string | null; included_structure: string | null; extra_hour_fee: number | null; contractor_city: string | null; sign_token: string | null; signer_name: string | null; signer_document: string | null; signer_email: string | null; signer_ip: string | null; signer_user_agent: string | null; document_hash: string | null; signature_image: string | null; signed_snapshot: Json | null };
+export type Contract = Timestamps & { id: string; lead_id: string | null; client_name: string; cpf_cnpj: string | null; total_value: number; producer_margin_pct: number; tax_pct: number; contract_pdf_url: string | null; status: ContractStatus; signed_at: string | null; client_address: string | null; client_phone: string | null; client_email: string | null; duration_label: string | null; included_structure: string | null; extra_hour_fee: number | null; contractor_city: string | null; contractor_name: string | null; contractor_document: string | null; contractor_address: string | null; contractor_phone: string | null; contractor_email: string | null; contractor_forum: string | null; sign_token: string | null; signer_name: string | null; signer_document: string | null; signer_email: string | null; signer_ip: string | null; signer_user_agent: string | null; document_hash: string | null; signature_image: string | null; signed_snapshot: Json | null };
 export type ContractInsert = Partial<Omit<Contract, "id" | "created_at" | "updated_at">> & { id?: string };
 export type ContractUpdate = Partial<Contract>;
 export type ProposalStatus = "rascunho" | "enviada" | "visualizada" | "aprovada" | "recusada" | "expirada" | "cancelada";
