@@ -108,6 +108,16 @@ export default async function PublicEventPage({
     );
   }
 
+  const record = typeof data === "object" && !Array.isArray(data) ? data : null;
+  if (!record || typeof record.title !== "string" || typeof record.event_date !== "string") {
+    console.error("O RPC do portal retornou um formato inesperado.", {
+      dataType: Array.isArray(data) ? "array" : typeof data,
+      rootKeys: record ? Object.keys(record) : [],
+      titleType: record ? typeof record.title : "not-object",
+      eventDateType: record ? typeof record.event_date : "not-object",
+    });
+  }
+
   let eventData: Json = data;
   let assetsUnavailable = false;
   if (containsStorageAsset(data)) {
